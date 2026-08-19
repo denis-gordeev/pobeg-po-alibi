@@ -65,8 +65,8 @@ async function generateAlibis(input: { origin: string; destination: string; date
   if (relayUrl && relayToken) {
     const response = await fetch(relayUrl, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${relayToken}` },
-      body: JSON.stringify(input),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, relayToken }),
       signal: AbortSignal.timeout(35_000),
     });
     if (!response.ok) throw new Error(`LLM relay: ${response.status}`);
@@ -178,11 +178,9 @@ export async function POST(request: Request) {
     else { place = destinations.find((item) => item.name === found.payload.meta?.to?.name) || place; }
 
     let alibis: string[] | null = null;
-    let llmError: string | null = null;
     try { alibis = await generateAlibis({ origin, destination: place.name, date, reason: plan.label, custom: customAlibi }); }
     catch (error) {
-      llmError = error instanceof Error ? error.message : "unknown error";
-      console.error("LLM generation failed:", llmError);
+      console.error("LLM generation failed:", error instanceof Error ? error.message : "unknown error");
       alibis = null;
     }
     const llmSource = alibis ? (getRuntimeEnv("LLM_RELAY_URL") || getRuntimeEnv("OPENROUTER_API_KEY") ? "openrouter" : "yandexgpt") : "fallback";
@@ -191,7 +189,7 @@ export async function POST(request: Request) {
     const firstLeg = offer.legs?.[0];
 
     return Response.json({
-      destination: place.name, reasonLabel: plan.label, alibis, llmSource, llmError,
+      destination: place.name, reasonLabel: plan.label, alibis, llmSource,
       protocol: `ОП-${hash(origin + date + reasonKey).toString(16).toUpperCase().slice(0, 6)}`,
       source, place,
       route: { from: { name: origin, lat: originLat, lon: originLon }, to: { name: place.name, lat: place.lat, lon: place.lon } },
