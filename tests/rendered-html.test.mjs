@@ -35,8 +35,27 @@ test("server-renders the finished escape planner", async () => {
   assert.match(html, /<title>Побег по алиби/);
   assert.match(html, /НЕ ТУРИЗМ\. ТАКТИЧЕСКОЕ ОТСУТСТВИЕ/);
   assert.match(html, /СФОРМИРОВАТЬ ПОБЕГ/);
+  assert.match(html, /ВАШ ЧЕРНОВИК АЛИБИ/);
+  assert.match(html, /пять алиби/i);
   assert.match(html, /og\.png/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
+});
+
+test("escape endpoint limits the custom alibi draft", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("http://localhost/api/escape", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ origin: "Москва", date: "2026-09-01", budget: 7000, customAlibi: "я".repeat(601) }),
+    }),
+    env,
+    context,
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /600/);
 });
 
 test("escape endpoint rejects malformed requests", async () => {
