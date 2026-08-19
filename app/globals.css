@@ -39,6 +39,10 @@ main { min-height:100vh; overflow:hidden; }
 .field input { width:100%; padding:0; border:0; outline:0; background:transparent; color:var(--cream); font-size:25px; font-weight:700; }
 .field input:focus { color:var(--orange); }
 .field input[type="date"] { color-scheme:dark; }
+.budget-field { display:flex; flex-direction:column; }
+.budget-presets { display:flex!important; flex-wrap:wrap; gap:6px; margin:14px 0 0!important; }
+.budget-presets button { min-width:42px; padding:6px 8px; border:1px solid #4b4741; background:transparent; color:#817b72; cursor:pointer; font:700 9px var(--font-geist-mono); }
+.budget-presets button:hover, .budget-presets button.active { border-color:var(--orange); background:var(--orange); color:var(--ink); }
 .alibi-draft { position:relative; }
 .alibi-draft textarea { width:100%; min-height:105px; padding:0 42px 0 0; resize:vertical; border:0; outline:0; background:transparent; color:var(--cream); font-size:17px; line-height:1.45; }
 .alibi-draft textarea:focus { color:var(--orange); }
@@ -86,6 +90,9 @@ main { min-height:100vh; overflow:hidden; }
 .ticket-stub { display:flex; flex-direction:column; justify-content:center; gap:15px; padding:30px; border-left:2px dashed #a89e90; }
 .ticket-stub small { font:9px var(--font-geist-mono); color:#7f766b; }
 .ticket-stub strong { font-size:27px; }.ticket-stub span { font-size:12px; color:#6f685f; }
+.budget-use { display:grid; gap:7px; height:auto; padding:9px 0 5px; border-top:4px solid #c6bcad; position:relative; }
+.budget-use b { position:absolute; left:0; top:-4px; height:4px; background:var(--blue); }
+.budget-use span { font:700 9px var(--font-geist-mono); color:#5f584f; }
 .ticket-stub a { margin-top:12px; padding:16px; background:var(--ink); color:var(--cream); text-decoration:none; text-align:center; font:800 11px var(--font-geist-mono); }
 .ticket-stub a:hover { background:var(--orange); color:var(--ink); }
 .route-card { margin-top:54px; display:grid; grid-template-columns:minmax(300px,.72fr) minmax(0,1.28fr); min-height:470px; background:var(--paper); color:var(--ink); }

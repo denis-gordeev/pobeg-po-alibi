@@ -11,6 +11,8 @@ type EscapeResult = {
   llmSource: "openrouter" | "yandexgpt" | "fallback";
   protocol: string;
   source: "live" | "demo";
+  selection: { profile: string; budgetShare: number; distanceKm: number };
+  cache: { status: "hit" | "miss"; ceiling: number };
   place: { mood: string; description: string; sights: string[] };
   route: { from: Point; to: Point };
   offer: { transport: string; price: { amount: number; currency: string }; durationMin: number; departureAt: string; arrivalAt: string; carrier: string; from: string; to: string; checkoutUrl: string; searchResultsUrl: string };
@@ -23,10 +25,12 @@ const reasons = [
   { value: "relatives", label: "вопроса «ну когда дети?»", mark: "04" },
 ];
 const transportNames: Record<string, string> = { railway: "ПОЕЗД", rail: "ПОЕЗД", avia: "САМОЛЁТ", bus: "АВТОБУС", etrain: "ЭЛЕКТРИЧКА" };
+const budgetPresets = [7_000, 20_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
 
 function isoDate(daysAhead: number) { const d = new Date(); d.setDate(d.getDate() + daysAhead); return d.toISOString().slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatDuration(minutes: number) { return `${Math.floor(minutes / 60)} ч ${(minutes % 60).toString().padStart(2, "0")} мин`; }
+function compactRubles(value: number) { return value >= 1_000_000 ? "1М" : value >= 1_000 ? `${value / 1_000}К` : String(value); }
 
 export default function Home() {
   const [origin, setOrigin] = useState("Москва");
@@ -76,7 +80,7 @@ export default function Home() {
           <div className="form-head"><span>ФОРМА 13-Б</span><strong>ЗАПРОС НА ВНЕЗАПНОЕ ИСЧЕЗНОВЕНИЕ</strong></div>
           <label className="field wide"><span>ГДЕ ВАС ЗАСТАЛА РЕАЛЬНОСТЬ</span><input value={origin} onChange={(e) => setOrigin(e.target.value)} required maxLength={80} /></label>
           <label className="field"><span>ДАТА ЭВАКУАЦИИ</span><input type="date" value={date} min={isoDate(1)} onChange={(e) => setDate(e.target.value)} required /></label>
-          <label className="field"><span>ПОТОЛОК СОВЕСТИ, ₽</span><input type="number" min="1000" max="200000" step="500" value={budget} onChange={(e) => setBudget(e.target.value)} required /></label>
+          <label className="field budget-field"><span>ПОТОЛОК СОВЕСТИ, ₽</span><input type="number" min="1000" max="1000000" step="500" value={budget} onChange={(e) => setBudget(e.target.value)} required /><span className="budget-presets" aria-label="Быстрый выбор бюджета">{budgetPresets.map((value) => <button type="button" key={value} className={Number(budget) === value ? "active" : ""} onClick={() => setBudget(String(value))}>{compactRubles(value)}</button>)}</span></label>
           <fieldset className="reason-field"><legend>ОТ ЧЕГО БЕЖИМ</legend><div className="reason-grid">
             {reasons.map((item) => <label key={item.value} className={reason === item.value ? "reason active" : "reason"}><input type="radio" name="reason" value={item.value} checked={reason === item.value} onChange={() => setReason(item.value)} /><small>{item.mark}</small><span>{item.label}</span></label>)}
           </div></fieldset>
@@ -94,10 +98,10 @@ export default function Home() {
       </section>
 
       {result && <section className="result" aria-live="polite">
-        <div className="result-label">МАРШРУТ УТВЕРЖДЁН · {result.source === "live" ? "ЖИВЫЕ ДАННЫЕ" : "УЧЕБНЫЙ РЕЖИМ"}</div>
+        <div className="result-label">МАРШРУТ УТВЕРЖДЁН · {result.source === "live" ? "ЖИВЫЕ ДАННЫЕ" : "УЧЕБНЫЙ РЕЖИМ"} · {result.cache.status === "hit" ? "ИЗ КЭША" : "СВЕЖАЯ РАЗВЕДКА"}</div>
         <div className="ticket"><div className="ticket-main"><p>ВАШЕ НОВОЕ МЕСТОНАХОЖДЕНИЕ</p><h2>{result.destination}</h2><div className="journey">
           <div><small>ОТПРАВЛЕНИЕ</small><strong>{formatDate(result.offer.departureAt)}</strong><span>{result.offer.from}</span></div><div className="journey-line"><i /><span>{transportNames[result.offer.transport] || result.offer.transport}</span><i /></div><div><small>ПРИБЫТИЕ</small><strong>{formatDate(result.offer.arrivalAt)}</strong><span>{result.offer.to}</span></div>
-        </div></div><div className="ticket-stub"><small>СТОИМОСТЬ<br />СВОБОДЫ</small><strong>{result.offer.price.amount.toLocaleString("ru-RU")} {result.offer.price.currency}</strong><span>{formatDuration(result.offer.durationMin)}</span><span>{result.offer.carrier}</span><a href={result.offer.checkoutUrl || result.offer.searchResultsUrl} target="_blank" rel="noreferrer">ВЗЯТЬ БИЛЕТ ↗</a></div></div>
+        </div></div><div className="ticket-stub"><small>{result.selection.profile}</small><div className="budget-use"><b style={{ width: `${Math.min(result.selection.budgetShare, 100)}%` }} /><span>{result.selection.budgetShare}% бюджета · {result.selection.distanceKm.toLocaleString("ru-RU")} км</span></div><small>СТОИМОСТЬ<br />СВОБОДЫ</small><strong>{result.offer.price.amount.toLocaleString("ru-RU")} {result.offer.price.currency}</strong><span>{formatDuration(result.offer.durationMin)}</span><span>{result.offer.carrier}</span><a href={result.offer.checkoutUrl || result.offer.searchResultsUrl} target="_blank" rel="noreferrer">ВЗЯТЬ БИЛЕТ ↗</a></div></div>
 
         <div className="route-card"><div className="place-copy"><p>ПОЧЕМУ ИМЕННО ТУДА</p><h3>{result.place.mood}</h3><p className="place-description">{result.place.description}</p><strong>РАЗВЕДАТЬ НА МЕСТЕ</strong><ul>{result.place.sights.map((sight) => <li key={sight}>{sight}</li>)}</ul></div><RouteMap from={result.route.from} to={result.route.to} /></div>
 
