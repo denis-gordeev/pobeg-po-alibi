@@ -40,7 +40,7 @@ npm run dev
 
 ```dotenv
 OPENROUTER_API_KEY=your-openrouter-key
-OPENROUTER_MODEL=google/gemini-2.5-flash
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash-0731
 ```
 
 Секрет используется только в серверном API и не попадает в браузер. Если провайдер недоступен, приложение возвращает пять резервных вариантов и помечает их как «Резервный штаб».

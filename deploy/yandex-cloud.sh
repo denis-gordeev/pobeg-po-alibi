@@ -52,7 +52,7 @@ $YC_BIN serverless container revision deploy \
   --cores 1 \
   --memory 1GB \
   --concurrency 4 \
-  --execution-timeout 45s \
+  --execution-timeout 75s \
   --environment "LLM_RELAY_URL=${LLM_RELAY_URL}" \
   --environment "LLM_RELAY_TOKEN=${LLM_RELAY_TOKEN}"
 

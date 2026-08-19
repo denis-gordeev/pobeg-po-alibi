@@ -67,7 +67,7 @@ async function generateAlibis(input: { origin: string; destination: string; date
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...input, relayToken }),
-      signal: AbortSignal.timeout(35_000),
+      signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok) throw new Error(`LLM relay: ${response.status}`);
     const data = (await response.json()) as { alibis?: unknown };
@@ -85,7 +85,7 @@ async function generateAlibis(input: { origin: string; destination: string; date
         "X-Title": "Pobeg Po Alibi",
       },
       body: JSON.stringify({
-        model: getRuntimeEnv("OPENROUTER_MODEL") || "google/gemini-2.5-flash",
+        model: getRuntimeEnv("OPENROUTER_MODEL") || "deepseek/deepseek-v4-flash-0731",
         temperature: 0.9,
         max_tokens: 1400,
         provider: { require_parameters: true },

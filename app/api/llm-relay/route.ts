@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     method: "POST",
     headers: { "content-type": "application/json", Authorization: `Bearer ${openRouterKey}`, "HTTP-Referer": "https://pobeg-po-alibi.boris-chan.chatgpt.site", "X-Title": "Pobeg Po Alibi" },
     body: JSON.stringify({
-      model: getRuntimeEnv("OPENROUTER_MODEL") || "google/gemini-2.5-flash",
+      model: getRuntimeEnv("OPENROUTER_MODEL") || "deepseek/deepseek-v4-flash-0731",
       temperature: 0.9,
       max_tokens: 1400,
       provider: { require_parameters: true },
