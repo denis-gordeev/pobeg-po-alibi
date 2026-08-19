@@ -39,7 +39,7 @@ async function callTutu(origin: string, destination: string, date: string, budge
   const response = await fetch(TUTU_MCP_URL, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "tools/call", "Mcp-Name": "search_multitransport" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_multitransport", arguments: { origin, destination, departure_date: date, adults: 1, optimize_for: "price", price_max: budget, page_size: 8, view: "compact" } } }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_multitransport", arguments: { origin, destination, departure_date: date, adults: 1, optimize_for: budget >= 50_000 ? "duration" : "price", price_max: budget, page_size: 8, view: "compact" } } }),
     signal: AbortSignal.timeout(18_000),
   });
   if (!response.ok) throw new Error(`Tutu MCP: ${response.status}`);

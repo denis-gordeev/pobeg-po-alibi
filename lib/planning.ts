@@ -69,8 +69,12 @@ export function selectPlan(candidates: PlanCandidate[], budget: number) {
   if (!eligible.length) return null;
   const target = targetBudgetShare(budget);
   const highBudget = budget >= 50_000;
+  const meaningful = highBudget
+    ? eligible.filter((candidate) => candidate.offer.price.amount / budget >= 0.12 || candidate.distanceKm >= 1_000 || /avia|plane|air/i.test(candidate.offer.transport))
+    : eligible;
+  if (!meaningful.length) return null;
 
-  return [...eligible].sort((a, b) => {
+  return [...meaningful].sort((a, b) => {
     const score = (candidate: PlanCandidate) => {
       const share = candidate.offer.price.amount / budget;
       const underuse = highBudget && share < 0.12 ? (0.12 - share) * 18 : 0;
