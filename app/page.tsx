@@ -26,6 +26,19 @@ const reasons = [
 ];
 const transportNames: Record<string, string> = { railway: "ПОЕЗД", rail: "ПОЕЗД", avia: "САМОЛЁТ", bus: "АВТОБУС", etrain: "ЭЛЕКТРИЧКА" };
 const budgetPresets = [7_000, 20_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
+const resultCacheKey = "pobeg-po-alibi:recent-results";
+const resultCacheTtl = 6 * 60 * 60 * 1000;
+type CachedResult = { key: string; savedAt: number; result: EscapeResult };
+
+function readCachedResults() {
+  try { return JSON.parse(localStorage.getItem(resultCacheKey) || "[]") as CachedResult[]; }
+  catch { return []; }
+}
+
+function writeCachedResults(rows: CachedResult[]) {
+  try { localStorage.setItem(resultCacheKey, JSON.stringify(rows)); }
+  catch { /* the live result still works when browser storage is unavailable */ }
+}
 
 function isoDate(daysAhead: number) { const d = new Date(); d.setDate(d.getDate() + daysAhead); return d.toISOString().slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
@@ -45,11 +58,20 @@ export default function Home() {
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError(""); setCopied(null); setResult(null);
+    const requestKey = JSON.stringify({ origin: origin.trim().toLocaleLowerCase("ru"), date, reason, budget: Number(budget), customAlibi: customAlibi.trim() });
     try {
+      const cachedRows = readCachedResults();
+      const cached = cachedRows.find((row) => row.key === requestKey && row.savedAt + resultCacheTtl > Date.now());
+      if (cached) {
+        setResult({ ...cached.result, cache: { ...cached.result.cache, status: "hit" } });
+        return;
+      }
       const response = await fetch("/api/escape", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ origin, date, reason, budget: Number(budget), customAlibi }) });
       const data = (await response.json()) as EscapeResult & { error?: string };
       if (!response.ok) throw new Error(data.error || "Маршрут сорвался с радара");
       setResult(data);
+      const freshRows = cachedRows.filter((row) => row.key !== requestKey && row.savedAt + resultCacheTtl > Date.now());
+      writeCachedResults([{ key: requestKey, savedAt: Date.now(), result: data }, ...freshRows].slice(0, 4));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Неизвестная тревога"); }
     finally { setLoading(false); }
   }
