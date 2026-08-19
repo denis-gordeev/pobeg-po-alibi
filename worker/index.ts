@@ -5,6 +5,13 @@ import handler from "vinext/server/app-router-entry";
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
+  YANDEX_CLOUD_FOLDER_ID?: string;
+  YANDEX_CLOUD_API_KEY?: string;
+  YANDEX_CLOUD_IAM_TOKEN?: string;
+  LLM_RELAY_URL?: string;
+  LLM_RELAY_TOKEN?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -27,6 +34,10 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const runtimeProcess = Reflect.get(globalThis, "process") as { env?: Record<string, string | undefined> } | undefined;
+    const names = ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "YANDEX_CLOUD_FOLDER_ID", "YANDEX_CLOUD_API_KEY", "YANDEX_CLOUD_IAM_TOKEN", "LLM_RELAY_URL", "LLM_RELAY_TOKEN"] as const;
+    const values = Object.fromEntries(names.map((name) => [name, runtimeProcess?.env?.[name] || env?.[name]]));
+    Reflect.set(globalThis, Symbol.for("pobeg.runtime.env"), values);
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {

@@ -13,7 +13,17 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
+  compatibility_date: "2026-08-01",
+  compatibility_flags: ["nodejs_compat", "nodejs_compat_populate_process_env"],
+  vars: {
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ?? "",
+    OPENROUTER_MODEL: process.env.OPENROUTER_MODEL ?? "google/gemini-2.5-flash",
+    YANDEX_CLOUD_FOLDER_ID: process.env.YANDEX_CLOUD_FOLDER_ID ?? "",
+    YANDEX_CLOUD_API_KEY: process.env.YANDEX_CLOUD_API_KEY ?? "",
+    YANDEX_CLOUD_IAM_TOKEN: process.env.YANDEX_CLOUD_IAM_TOKEN ?? "",
+    LLM_RELAY_URL: process.env.LLM_RELAY_URL ?? "",
+    LLM_RELAY_TOKEN: process.env.LLM_RELAY_TOKEN ?? "",
+  },
   d1_databases: d1
     ? [
         {
