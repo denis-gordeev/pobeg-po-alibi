@@ -36,6 +36,8 @@ test("server-renders the finished escape planner", async () => {
   assert.match(html, /НЕ ТУРИЗМ\. ТАКТИЧЕСКОЕ ОТСУТСТВИЕ/);
   assert.match(html, /СФОРМИРОВАТЬ ПОБЕГ/);
   assert.match(html, /ВАШ ЧЕРНОВИК АЛИБИ/);
+  assert.match(html, /Последние операции/);
+  assert.match(html, /Четыре последних маршрута останутся только в этом браузере/);
   assert.match(html, /1М/);
   assert.match(html, /пять алиби/i);
   assert.match(html, /og\.png/);

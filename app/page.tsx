@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import RouteMap from "./RouteMap";
 
 type Point = { name: string; lat: number; lon: number };
@@ -28,7 +28,8 @@ const transportNames: Record<string, string> = { railway: "ПОЕЗД", rail: "�
 const budgetPresets = [7_000, 20_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
 const resultCacheKey = "pobeg-po-alibi:recent-results";
 const resultCacheTtl = 6 * 60 * 60 * 1000;
-type CachedResult = { key: string; savedAt: number; result: EscapeResult };
+type EscapeRequest = { origin: string; date: string; reason: string; budget: number; customAlibi: string };
+type CachedResult = { key: string; savedAt: number; request?: EscapeRequest; result: EscapeResult };
 
 function readCachedResults() {
   try { return JSON.parse(localStorage.getItem(resultCacheKey) || "[]") as CachedResult[]; }
@@ -40,8 +41,24 @@ function writeCachedResults(rows: CachedResult[]) {
   catch { /* the live result still works when browser storage is unavailable */ }
 }
 
+function activeCachedResults() {
+  const rows = readCachedResults().filter((row) => row.savedAt + resultCacheTtl > Date.now()).slice(0, 4);
+  writeCachedResults(rows);
+  return rows;
+}
+
+function requestFromCache(row: CachedResult): EscapeRequest | null {
+  if (row.request) return row.request;
+  try {
+    const value = JSON.parse(row.key) as Partial<EscapeRequest>;
+    if (!value.origin || !value.date || !value.reason || !Number.isFinite(value.budget)) return null;
+    return { origin: value.origin, date: value.date, reason: value.reason, budget: Number(value.budget), customAlibi: value.customAlibi || "" };
+  } catch { return null; }
+}
+
 function isoDate(daysAhead: number) { const d = new Date(); d.setDate(d.getDate() + daysAhead); return d.toISOString().slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
+function formatSavedAt(value: number) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatDuration(minutes: number) { return `${Math.floor(minutes / 60)} ч ${(minutes % 60).toString().padStart(2, "0")} мин`; }
 function compactRubles(value: number) { return value >= 1_000_000 ? "1М" : value >= 1_000 ? `${value / 1_000}К` : String(value); }
 
@@ -55,15 +72,20 @@ export default function Home() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<EscapeResult | null>(null);
   const [copied, setCopied] = useState<number | null>(null);
+  const [history, setHistory] = useState<CachedResult[]>([]);
+
+  useEffect(() => { setHistory(activeCachedResults()); }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError(""); setCopied(null); setResult(null);
-    const requestKey = JSON.stringify({ origin: origin.trim().toLocaleLowerCase("ru"), date, reason, budget: Number(budget), customAlibi: customAlibi.trim() });
+    const escapeRequest = { origin: origin.trim(), date, reason, budget: Number(budget), customAlibi: customAlibi.trim() };
+    const requestKey = JSON.stringify({ ...escapeRequest, origin: escapeRequest.origin.toLocaleLowerCase("ru") });
     try {
-      const cachedRows = readCachedResults();
+      const cachedRows = activeCachedResults();
       const cached = cachedRows.find((row) => row.key === requestKey && row.savedAt + resultCacheTtl > Date.now());
       if (cached) {
         setResult({ ...cached.result, cache: { ...cached.result.cache, status: "hit" } });
+        setHistory(cachedRows);
         return;
       }
       const response = await fetch("/api/escape", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ origin, date, reason, budget: Number(budget), customAlibi }) });
@@ -71,7 +93,9 @@ export default function Home() {
       if (!response.ok) throw new Error(data.error || "Маршрут сорвался с радара");
       setResult(data);
       const freshRows = cachedRows.filter((row) => row.key !== requestKey && row.savedAt + resultCacheTtl > Date.now());
-      writeCachedResults([{ key: requestKey, savedAt: Date.now(), result: data }, ...freshRows].slice(0, 4));
+      const nextHistory = [{ key: requestKey, savedAt: Date.now(), request: escapeRequest, result: data }, ...freshRows].slice(0, 4);
+      writeCachedResults(nextHistory);
+      setHistory(nextHistory);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Неизвестная тревога"); }
     finally { setLoading(false); }
   }
@@ -80,6 +104,18 @@ export default function Home() {
     if (!result) return;
     await navigator.clipboard.writeText(result.alibis[index]); setCopied(index);
     window.setTimeout(() => setCopied(null), 1800);
+  }
+
+  function restoreOperation(row: CachedResult) {
+    const request = requestFromCache(row);
+    if (!request) return;
+    setOrigin(request.origin); setDate(request.date); setReason(request.reason); setBudget(String(request.budget)); setCustomAlibi(request.customAlibi);
+    setError(""); setCopied(null); setResult({ ...row.result, cache: { ...row.result.cache, status: "hit" } });
+    window.requestAnimationFrame(() => document.querySelector(".result")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
+  function clearHistory() {
+    writeCachedResults([]); setHistory([]);
   }
 
   return (
@@ -117,6 +153,19 @@ export default function Home() {
           <ol><li><b>01</b><span>Вы задаёте причину<br />или пишете свою.</span></li><li><b>02</b><span>Tutu MCP проверяет<br />живые варианты транспорта.</span></li><li><b>03</b><span>Штаб выбирает необычный город<br />и собирает мини-гид.</span></li><li><b>04</b><span>LLM выдаёт пять алиби,<br />а карта — путь отхода.</span></li></ol>
           <p className="warning">Важно: билет настоящий.<br />Алиби — нравственно гибкое.</p>
         </aside>
+      </section>
+
+      <section className="history" aria-labelledby="history-title">
+        <div className="history-head"><div><p>ЛОКАЛЬНЫЙ АРХИВ · 6 ЧАСОВ</p><h2 id="history-title">Последние операции</h2></div>{history.length > 0 && <button type="button" onClick={clearHistory}>ОЧИСТИТЬ АРХИВ</button>}</div>
+        {history.length === 0 ? <p className="history-empty">Архив пока пуст. Четыре последних маршрута останутся только в этом браузере.</p> : <div className="history-list">
+          {history.map((row) => {
+            const request = requestFromCache(row);
+            if (!request) return null;
+            return <button type="button" className="history-item" key={`${row.key}:${row.savedAt}`} onClick={() => restoreOperation(row)} aria-label={`Восстановить маршрут ${request.origin} — ${row.result.destination}`}>
+              <span>{formatSavedAt(row.savedAt)}</span><strong>{request.origin} → {row.result.destination}</strong><small>{row.result.offer.price.amount.toLocaleString("ru-RU")} {row.result.offer.price.currency} · {transportNames[row.result.offer.transport] || row.result.offer.transport}</small><b>ВОССТАНОВИТЬ →</b>
+            </button>;
+          })}
+        </div>}
       </section>
 
       {result && <section className="result" aria-live="polite">
