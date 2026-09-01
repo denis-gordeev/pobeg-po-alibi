@@ -4,18 +4,21 @@ import { FormEvent, useEffect, useState } from "react";
 import RouteMap from "./RouteMap";
 
 type Point = { name: string; lat: number; lon: number };
-type EscapeResult = {
+type RouteOption = {
   destination: string;
+  selection: { profile: string; budgetShare: number; distanceKm: number };
+  place: { mood: string; description: string; sights: string[] };
+  route: { from: Point; to: Point };
+  offer: { transport: string; price: { amount: number; currency: string }; durationMin: number; departureAt: string; arrivalAt: string; carrier: string; from: string; to: string; checkoutUrl: string; searchResultsUrl: string };
+};
+type EscapeResult = RouteOption & {
   reasonLabel: string;
   alibis: string[];
   llmSource: "openrouter" | "yandexgpt" | "fallback";
   protocol: string;
   source: "live" | "demo";
-  selection: { profile: string; budgetShare: number; distanceKm: number };
+  alternatives: Array<RouteOption & { id: "economy" | "balanced" | "far" | "budget"; label: string }>;
   cache: { status: "hit" | "miss"; ceiling: number };
-  place: { mood: string; description: string; sights: string[] };
-  route: { from: Point; to: Point };
-  offer: { transport: string; price: { amount: number; currency: string }; durationMin: number; departureAt: string; arrivalAt: string; carrier: string; from: string; to: string; checkoutUrl: string; searchResultsUrl: string };
 };
 
 const reasons = [
@@ -74,7 +77,10 @@ export default function Home() {
   const [copied, setCopied] = useState<number | null>(null);
   const [history, setHistory] = useState<CachedResult[]>([]);
 
-  useEffect(() => { setHistory(activeCachedResults()); }, []);
+  useEffect(() => {
+    const hydrateHistory = window.setTimeout(() => setHistory(activeCachedResults()), 0);
+    return () => window.clearTimeout(hydrateHistory);
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError(""); setCopied(null); setResult(null);
@@ -170,6 +176,16 @@ export default function Home() {
 
       {result && <section className="result" aria-live="polite">
         <div className="result-label">МАРШРУТ УТВЕРЖДЁН · {result.source === "live" ? "ЖИВЫЕ ДАННЫЕ" : "УЧЕБНЫЙ РЕЖИМ"} · {result.cache.status === "hit" ? "ИЗ КЭША" : "СВЕЖАЯ РАЗВЕДКА"}</div>
+        {result.alternatives?.length > 0 && <div className="route-profiles" aria-label="Четыре профиля маршрута">
+          <div className="profiles-head"><p>ЧЕТЫРЕ СЦЕНАРИЯ ОТХОДА</p><h2>Сравните характер побега</h2></div>
+          <div className="profiles-grid">{result.alternatives.map((alternative) => <article className="profile-card" key={alternative.id}>
+            <span>{alternative.label}</span><h3>{alternative.destination}</h3>
+            <p>{transportNames[alternative.offer.transport] || alternative.offer.transport} · {formatDuration(alternative.offer.durationMin)}</p>
+            <strong>{alternative.offer.price.amount.toLocaleString("ru-RU")} {alternative.offer.price.currency}</strong>
+            <small>{alternative.selection.distanceKm.toLocaleString("ru-RU")} км · {alternative.selection.budgetShare}% бюджета</small>
+            <a href={alternative.offer.checkoutUrl || alternative.offer.searchResultsUrl} target="_blank" rel="noreferrer">ПРОВЕРИТЬ БИЛЕТ ↗</a>
+          </article>)}</div>
+        </div>}
         <div className="ticket"><div className="ticket-main"><p>ВАШЕ НОВОЕ МЕСТОНАХОЖДЕНИЕ</p><h2>{result.destination}</h2><div className="journey">
           <div><small>ОТПРАВЛЕНИЕ</small><strong>{formatDate(result.offer.departureAt)}</strong><span>{result.offer.from}</span></div><div className="journey-line"><i /><span>{transportNames[result.offer.transport] || result.offer.transport}</span><i /></div><div><small>ПРИБЫТИЕ</small><strong>{formatDate(result.offer.arrivalAt)}</strong><span>{result.offer.to}</span></div>
         </div></div><div className="ticket-stub"><small>{result.selection.profile}</small><div className="budget-use"><b style={{ width: `${Math.min(result.selection.budgetShare, 100)}%` }} /><span>{result.selection.budgetShare}% бюджета · {result.selection.distanceKm.toLocaleString("ru-RU")} км</span></div><small>СТОИМОСТЬ<br />СВОБОДЫ</small><strong>{result.offer.price.amount.toLocaleString("ru-RU")} {result.offer.price.currency}</strong><span>{formatDuration(result.offer.durationMin)}</span><span>{result.offer.carrier}</span><a href={result.offer.checkoutUrl || result.offer.searchResultsUrl} target="_blank" rel="noreferrer">ВЗЯТЬ БИЛЕТ ↗</a></div></div>

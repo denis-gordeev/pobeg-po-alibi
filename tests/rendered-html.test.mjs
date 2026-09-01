@@ -117,6 +117,10 @@ test("high budgets prefer a meaningful trip over a 700-ruble commuter train", as
     assert.equal(body.offer.price.amount, 32_000);
     assert.equal(body.selection.budgetShare, 64);
     assert.equal(body.cache.ceiling, 50_000);
+    assert.deepEqual(body.alternatives.map(({ id }) => id), ["economy", "balanced", "far", "budget"]);
+    assert.equal(body.alternatives.length, 4);
+    assert.equal(new Set(body.alternatives.map(({ destination }) => destination)).size, 4);
+    assert.ok(body.alternatives.every(({ offer, route, selection }) => offer.checkoutUrl && route.to.name && selection.distanceKm > 0));
   } finally {
     globalThis.fetch = originalFetch;
   }

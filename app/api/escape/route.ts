@@ -5,6 +5,7 @@ import {
   diverseDestinations,
   normalizeBudgetCeiling,
   selectPlan,
+  selectPlanProfiles,
   selectionSummary,
   type TransportOffer,
 } from "../../../lib/planning";
@@ -23,8 +24,25 @@ function getRuntimeEnv(name: string) {
 type SearchOffer = TransportOffer;
 type SearchPayload = { variants?: SearchOffer[]; meta?: { to?: { name?: string } } };
 type CachedSearches = Array<{ place: EscapeDestination; payload: SearchPayload | null }>;
+type RankedCandidate = ReturnType<typeof rankedCandidate>;
 
 const routeSearchCache = new LruTtlCache<CachedSearches>(4, 15 * 60 * 1000);
+
+function rankedCandidate(place: EscapeDestination, offer: SearchOffer, originPoint: [number, number]) {
+  return { place, offer, distanceKm: distanceKm(originPoint, [place.lat, place.lon]) };
+}
+
+function publicRoute(candidate: RankedCandidate, origin: string, originPoint: [number, number], budget: number) {
+  const { place, offer } = candidate;
+  const firstLeg = offer.legs?.[0];
+  return {
+    destination: place.name,
+    place,
+    selection: selectionSummary(candidate, budget),
+    route: { from: { name: origin, lat: originPoint[0], lon: originPoint[1] }, to: { name: place.name, lat: place.lat, lon: place.lon } },
+    offer: { transport: offer.transport, price: offer.price, durationMin: offer.duration_min, departureAt: offer.departure_at, arrivalAt: offer.arrival_at, carrier: offer.carriers?.join(", ") || "Перевозчик не указан", from: firstLeg?.from || origin, to: firstLeg?.to || place.name, checkoutUrl: offer.checkout_url || offer.search_results_url, searchResultsUrl: offer.search_results_url },
+  };
+}
 
 const escapePlans: Record<string, { label: string; excuse: string }> = {
   meeting: { label: "созвона на 47 человек", excuse: "служебная встреча внезапно вышла за пределы часового пояса" },
@@ -50,7 +68,8 @@ async function callTutu(origin: string, destination: string, date: string, budge
 }
 
 function demoOffer(origin: string, destination: string, date: string, budget: number, routeDistance: number): SearchOffer {
-  const amount = Math.min(budget, Math.max(1_200, Math.round(budget * (budget >= 50_000 ? 0.62 : 0.48) / 10) * 10));
+  const distanceShare = 0.25 + Math.min(routeDistance / 2_500, 1) * 0.5;
+  const amount = Math.min(budget, Math.max(1_200, Math.round(budget * distanceShare / 10) * 10));
   const isFlight = budget >= 50_000 && routeDistance >= 1_000;
   return { transport: isFlight ? "avia" : "railway", price: { amount, currency: "RUB" }, duration_min: isFlight ? 185 : Math.max(210, Math.round(routeDistance / 75 * 60)), departure_at: `${date}T19:16:00+03:00`, arrival_at: `${date}T23:50:00+03:00`, carriers: [isFlight ? "Учебная авиация" : "ФПК"], search_results_url: isFlight ? "https://avia.tutu.ru/" : "https://www.tutu.ru/poezda/", checkout_url: isFlight ? "https://avia.tutu.ru/" : "https://www.tutu.ru/poezda/", legs: [{ from: origin, to: destination }] };
 }
@@ -193,10 +212,7 @@ export async function POST(request: Request) {
       routeSearchCache.set(cacheKey, searches);
     }
     const ranked = searches.flatMap(({ place, payload }) => (payload?.variants || []).map((offer) => ({
-      place,
-      payload,
-      offer,
-      distanceKm: distanceKm(originPoint, [place.lat, place.lon]),
+      ...rankedCandidate(place, offer, originPoint), payload,
     })));
     const found = selectPlan(ranked, budget);
 
@@ -211,6 +227,13 @@ export async function POST(request: Request) {
       routeDistance = distanceKm(originPoint, [place.lat, place.lon]);
     }
     const selection = selectionSummary({ place, offer, distanceKm: routeDistance }, budget);
+    const liveProfileCandidates = selectPlanProfiles(ranked, budget);
+    const demoProfileCandidates = selectPlanProfiles(candidates.map((candidatePlace) => {
+      const candidateDistance = distanceKm(originPoint, [candidatePlace.lat, candidatePlace.lon]);
+      return rankedCandidate(candidatePlace, demoOffer(origin, candidatePlace.name, date, budget, candidateDistance), originPoint);
+    }), budget);
+    const profileCandidates = liveProfileCandidates.length === 4 ? liveProfileCandidates : demoProfileCandidates;
+    const alternatives = profileCandidates.map(({ id, label, candidate }) => ({ id, label, ...publicRoute(candidate, origin, originPoint, budget) }));
 
     let alibis: string[] | null = null;
     try { alibis = await generateAlibis({ origin, destination: place.name, date, reason: plan.label, custom: customAlibi }); }
@@ -220,14 +243,12 @@ export async function POST(request: Request) {
     }
     const llmSource = alibis ? (getRuntimeEnv("LLM_RELAY_URL") || getRuntimeEnv("OPENROUTER_API_KEY") ? "openrouter" : "yandexgpt") : "fallback";
     alibis ||= fallbackAlibis(origin, place.name, date, plan, customAlibi);
-    const firstLeg = offer.legs?.[0];
+    const selectedRoute = publicRoute({ place, offer, distanceKm: routeDistance }, origin, originPoint, budget);
 
     return Response.json({
       destination: place.name, reasonLabel: plan.label, alibis, llmSource,
       protocol: `ОП-${hash(origin + date + reasonKey).toString(16).toUpperCase().slice(0, 6)}`,
-      source, place, selection, cache: { status: cacheStatus, ceiling },
-      route: { from: { name: origin, lat: originLat, lon: originLon }, to: { name: place.name, lat: place.lat, lon: place.lon } },
-      offer: { transport: offer.transport, price: offer.price, durationMin: offer.duration_min, departureAt: offer.departure_at, arrivalAt: offer.arrival_at, carrier: offer.carriers?.join(", ") || "Перевозчик не указан", from: firstLeg?.from || origin, to: firstLeg?.to || place.name, checkoutUrl: offer.checkout_url || offer.search_results_url, searchResultsUrl: offer.search_results_url },
+      source, ...selectedRoute, selection, alternatives, cache: { status: cacheStatus, ceiling },
     });
   } catch {
     return Response.json({ error: "Штаб временно потерял карту. Попробуйте ещё раз." }, { status: 500 });

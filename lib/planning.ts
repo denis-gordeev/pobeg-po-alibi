@@ -20,6 +20,14 @@ export type PlanCandidate = {
   distanceKm: number;
 };
 
+export type PlanProfile = "economy" | "balanced" | "far" | "budget";
+
+export type ProfiledPlan = {
+  id: PlanProfile;
+  label: string;
+  candidate: PlanCandidate;
+};
+
 export function normalizeBudgetCeiling(budget: number) {
   return budgetCeilings.find((ceiling) => budget <= ceiling) ?? budgetCeilings.at(-1)!;
 }
@@ -85,6 +93,32 @@ export function selectPlan(candidates: PlanCandidate[], budget: number) {
     };
     return score(a) - score(b);
   })[0];
+}
+
+export function selectPlanProfiles(candidates: PlanCandidate[], budget: number): ProfiledPlan[] {
+  const eligible = candidates.filter(({ offer }) => offer.price.amount > 0 && offer.price.amount <= budget);
+  if (!eligible.length) return [];
+
+  const sorted = {
+    economy: [...eligible].sort((a, b) => a.offer.price.amount - b.offer.price.amount),
+    balanced: [selectPlan(eligible, budget), ...eligible].filter((candidate): candidate is PlanCandidate => Boolean(candidate)),
+    far: [...eligible].sort((a, b) => b.distanceKm - a.distanceKm || a.offer.price.amount - b.offer.price.amount),
+    budget: [...eligible].sort((a, b) => b.offer.price.amount - a.offer.price.amount || b.distanceKm - a.distanceKm),
+  };
+  const profiles: Array<{ id: PlanProfile; label: string; candidates: PlanCandidate[] }> = [
+    { id: "economy", label: "ЭКОНОМНЫЙ", candidates: sorted.economy },
+    { id: "balanced", label: "СБАЛАНСИРОВАННЫЙ", candidates: sorted.balanced },
+    { id: "far", label: "ДАЛЬНИЙ", candidates: sorted.far },
+    { id: "budget", label: "ОСВОИТЬ БЮДЖЕТ", candidates: sorted.budget },
+  ];
+  const used = new Set<string>();
+
+  return profiles.flatMap(({ id, label, candidates: profileCandidates }) => {
+    const candidate = profileCandidates.find(({ place }) => !used.has(place.name));
+    if (!candidate) return [];
+    used.add(candidate.place.name);
+    return [{ id, label, candidate }];
+  });
 }
 
 export function selectionSummary(candidate: PlanCandidate, budget: number) {
