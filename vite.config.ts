@@ -13,7 +13,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  compatibility_date: "2026-08-01",
+  compatibility_date: "2026-05-22",
   compatibility_flags: ["nodejs_compat", "nodejs_compat_populate_process_env"],
   vars: {
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ?? "",

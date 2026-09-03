@@ -121,6 +121,38 @@ test("high budgets prefer a meaningful trip over a 700-ruble commuter train", as
     assert.equal(body.alternatives.length, 4);
     assert.equal(new Set(body.alternatives.map(({ destination }) => destination)).size, 4);
     assert.ok(body.alternatives.every(({ offer, route, selection }) => offer.checkoutUrl && route.to.name && selection.distanceKm > 0));
+    assert.ok(body.alternatives.every(({ offer }) => offer.quote.source === "tutu" && !Number.isNaN(Date.parse(offer.quote.fetchedAt))));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("alibi refresh changes destination without calling Tutu", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  let externalCalls = 0;
+  globalThis.fetch = async () => {
+    externalCalls += 1;
+    throw new Error("No external request is expected for fallback alibis");
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/alibis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: "Москва", destination: "Псков", date: "2026-09-05", reason: "renovation", customAlibi: "Проверяю тишину" }),
+      }),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.llmSource, "fallback");
+    assert.equal(body.reasonLabel, "ремонта у соседей");
+    assert.equal(body.alibis.length, 5);
+    assert.ok(body.alibis.some((alibi) => alibi.includes("Псков")));
+    assert.equal(externalCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -9,7 +9,7 @@ type RouteOption = {
   selection: { profile: string; budgetShare: number; distanceKm: number };
   place: { mood: string; description: string; sights: string[] };
   route: { from: Point; to: Point };
-  offer: { transport: string; price: { amount: number; currency: string }; durationMin: number; departureAt: string; arrivalAt: string; carrier: string; from: string; to: string; checkoutUrl: string; searchResultsUrl: string };
+  offer: { transport: string; price: { amount: number; currency: string }; durationMin: number; departureAt: string; arrivalAt: string; carrier: string; from: string; to: string; checkoutUrl: string; searchResultsUrl: string; quote?: { source: "tutu" | "demo"; fetchedAt: string } };
 };
 type EscapeResult = RouteOption & {
   reasonLabel: string;
@@ -31,16 +31,24 @@ const transportNames: Record<string, string> = { railway: "ПОЕЗД", rail: "�
 const budgetPresets = [7_000, 20_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
 const resultCacheKey = "pobeg-po-alibi:recent-results";
 const resultCacheTtl = 6 * 60 * 60 * 1000;
+const resultCacheVersion = 2;
 type EscapeRequest = { origin: string; date: string; reason: string; budget: number; customAlibi: string };
 type CachedResult = { key: string; savedAt: number; request?: EscapeRequest; result: EscapeResult };
 
+function requestCacheKey(request: EscapeRequest) {
+  return JSON.stringify({ ...request, origin: request.origin.toLocaleLowerCase("ru") });
+}
+
 function readCachedResults() {
-  try { return JSON.parse(localStorage.getItem(resultCacheKey) || "[]") as CachedResult[]; }
+  try {
+    const stored = JSON.parse(localStorage.getItem(resultCacheKey) || "[]") as CachedResult[] | { version?: number; rows?: CachedResult[] };
+    return Array.isArray(stored) ? stored : stored.version === resultCacheVersion && Array.isArray(stored.rows) ? stored.rows : [];
+  }
   catch { return []; }
 }
 
 function writeCachedResults(rows: CachedResult[]) {
-  try { localStorage.setItem(resultCacheKey, JSON.stringify(rows)); }
+  try { localStorage.setItem(resultCacheKey, JSON.stringify({ version: resultCacheVersion, rows })); }
   catch { /* the live result still works when browser storage is unavailable */ }
 }
 
@@ -62,6 +70,8 @@ function requestFromCache(row: CachedResult): EscapeRequest | null {
 function isoDate(daysAhead: number) { const d = new Date(); d.setDate(d.getDate() + daysAhead); return d.toISOString().slice(0, 10); }
 function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatSavedAt(value: number) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
+function formatQuote(value?: string) { return value ? new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : "время неизвестно"; }
+function quoteLabel(quote?: RouteOption["offer"]["quote"]) { return `${quote?.source === "tutu" ? "Tutu.ru MCP" : quote?.source === "demo" ? "учебная оценка" : "источник не указан"} · ${formatQuote(quote?.fetchedAt)}`; }
 function formatDuration(minutes: number) { return `${Math.floor(minutes / 60)} ч ${(minutes % 60).toString().padStart(2, "0")} мин`; }
 function compactRubles(value: number) { return value >= 1_000_000 ? "1М" : value >= 1_000 ? `${value / 1_000}К` : String(value); }
 
@@ -76,21 +86,28 @@ export default function Home() {
   const [result, setResult] = useState<EscapeResult | null>(null);
   const [copied, setCopied] = useState<number | null>(null);
   const [history, setHistory] = useState<CachedResult[]>([]);
+  const [activeRequest, setActiveRequest] = useState<EscapeRequest | null>(null);
+  const [switchingProfile, setSwitchingProfile] = useState<string | null>(null);
 
   useEffect(() => {
     const hydrateHistory = window.setTimeout(() => setHistory(activeCachedResults()), 0);
-    return () => window.clearTimeout(hydrateHistory);
+    const syncHistory = (event: StorageEvent) => {
+      if (event.key === resultCacheKey || event.key === null) setHistory(activeCachedResults());
+    };
+    window.addEventListener("storage", syncHistory);
+    return () => { window.clearTimeout(hydrateHistory); window.removeEventListener("storage", syncHistory); };
   }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError(""); setCopied(null); setResult(null);
     const escapeRequest = { origin: origin.trim(), date, reason, budget: Number(budget), customAlibi: customAlibi.trim() };
-    const requestKey = JSON.stringify({ ...escapeRequest, origin: escapeRequest.origin.toLocaleLowerCase("ru") });
+    const requestKey = requestCacheKey(escapeRequest);
     try {
       const cachedRows = activeCachedResults();
       const cached = cachedRows.find((row) => row.key === requestKey && row.savedAt + resultCacheTtl > Date.now());
       if (cached) {
         setResult({ ...cached.result, cache: { ...cached.result.cache, status: "hit" } });
+        setActiveRequest(escapeRequest);
         setHistory(cachedRows);
         return;
       }
@@ -98,6 +115,7 @@ export default function Home() {
       const data = (await response.json()) as EscapeResult & { error?: string };
       if (!response.ok) throw new Error(data.error || "Маршрут сорвался с радара");
       setResult(data);
+      setActiveRequest(escapeRequest);
       const freshRows = cachedRows.filter((row) => row.key !== requestKey && row.savedAt + resultCacheTtl > Date.now());
       const nextHistory = [{ key: requestKey, savedAt: Date.now(), request: escapeRequest, result: data }, ...freshRows].slice(0, 4);
       writeCachedResults(nextHistory);
@@ -116,12 +134,51 @@ export default function Home() {
     const request = requestFromCache(row);
     if (!request) return;
     setOrigin(request.origin); setDate(request.date); setReason(request.reason); setBudget(String(request.budget)); setCustomAlibi(request.customAlibi);
-    setError(""); setCopied(null); setResult({ ...row.result, cache: { ...row.result.cache, status: "hit" } });
+    setError(""); setCopied(null); setActiveRequest(request); setResult({ ...row.result, cache: { ...row.result.cache, status: "hit" } });
     window.requestAnimationFrame(() => document.querySelector(".result")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   function clearHistory() {
     writeCachedResults([]); setHistory([]);
+  }
+
+  function removeHistoryItem(row: CachedResult) {
+    const nextHistory = activeCachedResults().filter((item) => !(item.key === row.key && item.savedAt === row.savedAt));
+    writeCachedResults(nextHistory); setHistory(nextHistory);
+  }
+
+  async function switchRoute(alternative: EscapeResult["alternatives"][number]) {
+    if (!result || !activeRequest || alternative.destination === result.destination) return;
+    setSwitchingProfile(alternative.id); setError(""); setCopied(null);
+    try {
+      const response = await fetch("/api/alibis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...activeRequest, destination: alternative.destination }),
+      });
+      const data = (await response.json()) as Pick<EscapeResult, "alibis" | "llmSource" | "reasonLabel"> & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Не удалось обновить пакет прикрытия");
+      const updated: EscapeResult = {
+        ...result,
+        destination: alternative.destination,
+        selection: alternative.selection,
+        place: alternative.place,
+        route: alternative.route,
+        offer: alternative.offer,
+        source: alternative.offer.quote?.source === "tutu" ? "live" : "demo",
+        alibis: data.alibis,
+        llmSource: data.llmSource,
+        reasonLabel: data.reasonLabel,
+      };
+      setResult(updated);
+      const requestKey = requestCacheKey(activeRequest);
+      const nextHistory = activeCachedResults().map((row) => row.key === requestKey ? { ...row, result: updated } : row);
+      writeCachedResults(nextHistory); setHistory(nextHistory);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Неизвестная тревога");
+    } finally {
+      setSwitchingProfile(null);
+    }
   }
 
   return (
@@ -167,9 +224,12 @@ export default function Home() {
           {history.map((row) => {
             const request = requestFromCache(row);
             if (!request) return null;
-            return <button type="button" className="history-item" key={`${row.key}:${row.savedAt}`} onClick={() => restoreOperation(row)} aria-label={`Восстановить маршрут ${request.origin} — ${row.result.destination}`}>
-              <span>{formatSavedAt(row.savedAt)}</span><strong>{request.origin} → {row.result.destination}</strong><small>{row.result.offer.price.amount.toLocaleString("ru-RU")} {row.result.offer.price.currency} · {transportNames[row.result.offer.transport] || row.result.offer.transport}</small><b>ВОССТАНОВИТЬ →</b>
-            </button>;
+            return <article className="history-item" key={`${row.key}:${row.savedAt}`}>
+              <button type="button" className="history-restore" onClick={() => restoreOperation(row)} aria-label={`Восстановить маршрут ${request.origin} — ${row.result.destination}`}>
+                <span>{formatSavedAt(row.savedAt)}</span><strong>{request.origin} → {row.result.destination}</strong><small>{row.result.offer.price.amount.toLocaleString("ru-RU")} {row.result.offer.price.currency} · {transportNames[row.result.offer.transport] || row.result.offer.transport}</small><b>ВОССТАНОВИТЬ →</b>
+              </button>
+              <button type="button" className="history-remove" onClick={() => removeHistoryItem(row)} aria-label={`Удалить маршрут ${request.origin} — ${row.result.destination} из архива`}>УДАЛИТЬ</button>
+            </article>;
           })}
         </div>}
       </section>
@@ -178,17 +238,19 @@ export default function Home() {
         <div className="result-label">МАРШРУТ УТВЕРЖДЁН · {result.source === "live" ? "ЖИВЫЕ ДАННЫЕ" : "УЧЕБНЫЙ РЕЖИМ"} · {result.cache.status === "hit" ? "ИЗ КЭША" : "СВЕЖАЯ РАЗВЕДКА"}</div>
         {result.alternatives?.length > 0 && <div className="route-profiles" aria-label="Четыре профиля маршрута">
           <div className="profiles-head"><p>ЧЕТЫРЕ СЦЕНАРИЯ ОТХОДА</p><h2>Сравните характер побега</h2></div>
-          <div className="profiles-grid">{result.alternatives.map((alternative) => <article className="profile-card" key={alternative.id}>
+          <div className="profiles-grid">{result.alternatives.map((alternative) => <article className={alternative.destination === result.destination ? "profile-card active" : "profile-card"} key={alternative.id}>
             <span>{alternative.label}</span><h3>{alternative.destination}</h3>
             <p>{transportNames[alternative.offer.transport] || alternative.offer.transport} · {formatDuration(alternative.offer.durationMin)}</p>
             <strong>{alternative.offer.price.amount.toLocaleString("ru-RU")} {alternative.offer.price.currency}</strong>
             <small>{alternative.selection.distanceKm.toLocaleString("ru-RU")} км · {alternative.selection.budgetShare}% бюджета</small>
+            <small className="quote-source">ЦЕНА: {quoteLabel(alternative.offer.quote)}</small>
+            <button type="button" onClick={() => switchRoute(alternative)} disabled={alternative.destination === result.destination || switchingProfile !== null}>{alternative.destination === result.destination ? "ВЫБРАНО ✓" : switchingProfile === alternative.id ? "ОБНОВЛЯЕМ АЛИБИ…" : "ВЫБРАТЬ МАРШРУТ"}</button>
             <a href={alternative.offer.checkoutUrl || alternative.offer.searchResultsUrl} target="_blank" rel="noreferrer">ПРОВЕРИТЬ БИЛЕТ ↗</a>
           </article>)}</div>
         </div>}
         <div className="ticket"><div className="ticket-main"><p>ВАШЕ НОВОЕ МЕСТОНАХОЖДЕНИЕ</p><h2>{result.destination}</h2><div className="journey">
           <div><small>ОТПРАВЛЕНИЕ</small><strong>{formatDate(result.offer.departureAt)}</strong><span>{result.offer.from}</span></div><div className="journey-line"><i /><span>{transportNames[result.offer.transport] || result.offer.transport}</span><i /></div><div><small>ПРИБЫТИЕ</small><strong>{formatDate(result.offer.arrivalAt)}</strong><span>{result.offer.to}</span></div>
-        </div></div><div className="ticket-stub"><small>{result.selection.profile}</small><div className="budget-use"><b style={{ width: `${Math.min(result.selection.budgetShare, 100)}%` }} /><span>{result.selection.budgetShare}% бюджета · {result.selection.distanceKm.toLocaleString("ru-RU")} км</span></div><small>СТОИМОСТЬ<br />СВОБОДЫ</small><strong>{result.offer.price.amount.toLocaleString("ru-RU")} {result.offer.price.currency}</strong><span>{formatDuration(result.offer.durationMin)}</span><span>{result.offer.carrier}</span><a href={result.offer.checkoutUrl || result.offer.searchResultsUrl} target="_blank" rel="noreferrer">ВЗЯТЬ БИЛЕТ ↗</a></div></div>
+        </div></div><div className="ticket-stub"><small>{result.selection.profile}</small><div className="budget-use"><b style={{ width: `${Math.min(result.selection.budgetShare, 100)}%` }} /><span>{result.selection.budgetShare}% бюджета · {result.selection.distanceKm.toLocaleString("ru-RU")} км</span></div><small>СТОИМОСТЬ<br />СВОБОДЫ</small><strong>{result.offer.price.amount.toLocaleString("ru-RU")} {result.offer.price.currency}</strong><span>{formatDuration(result.offer.durationMin)}</span><span>{result.offer.carrier}</span><small>ЦЕНА: {quoteLabel(result.offer.quote)}</small><a href={result.offer.checkoutUrl || result.offer.searchResultsUrl} target="_blank" rel="noreferrer">ВЗЯТЬ БИЛЕТ ↗</a></div></div>
 
         <div className="route-card"><div className="place-copy"><p>ПОЧЕМУ ИМЕННО ТУДА</p><h3>{result.place.mood}</h3><p className="place-description">{result.place.description}</p><strong>РАЗВЕДАТЬ НА МЕСТЕ</strong><ul>{result.place.sights.map((sight) => <li key={sight}>{sight}</li>)}</ul></div><RouteMap from={result.route.from} to={result.route.to} /></div>
 
