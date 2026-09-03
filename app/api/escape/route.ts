@@ -5,9 +5,12 @@ import {
   distanceKm,
   diverseDestinations,
   normalizeBudgetCeiling,
+  offerMatchesFilters,
   selectPlan,
   selectPlanProfiles,
   selectionSummary,
+  transportModes,
+  type TransportMode,
   type TransportOffer,
 } from "../../../lib/planning";
 
@@ -55,11 +58,19 @@ async function callTutu(origin: string, destination: string, date: string, budge
   return JSON.parse(text) as SearchPayload;
 }
 
-function demoOffer(origin: string, destination: string, date: string, budget: number, routeDistance: number): SearchOffer {
+function demoOffer(origin: string, destination: string, date: string, budget: number, routeDistance: number, modes: TransportMode[]): SearchOffer {
   const distanceShare = 0.25 + Math.min(routeDistance / 2_500, 1) * 0.5;
   const amount = Math.min(budget, Math.max(1_200, Math.round(budget * distanceShare / 10) * 10));
-  const isFlight = budget >= 50_000 && routeDistance >= 1_000;
-  return { transport: isFlight ? "avia" : "railway", price: { amount, currency: "RUB" }, duration_min: isFlight ? 185 : Math.max(210, Math.round(routeDistance / 75 * 60)), departure_at: `${date}T19:16:00+03:00`, arrival_at: `${date}T23:50:00+03:00`, carriers: [isFlight ? "Учебная авиация" : "ФПК"], search_results_url: isFlight ? "https://avia.tutu.ru/" : "https://www.tutu.ru/poezda/", checkout_url: isFlight ? "https://avia.tutu.ru/" : "https://www.tutu.ru/poezda/", legs: [{ from: origin, to: destination }] };
+  const preferredMode: TransportMode = modes.includes("avia") && budget >= 50_000 && routeDistance >= 1_000
+    ? "avia"
+    : modes.includes("railway") ? "railway" : modes[0];
+  const durationMin = preferredMode === "avia"
+    ? Math.max(100, Math.round(70 + routeDistance / 700 * 60))
+    : preferredMode === "bus"
+      ? Math.max(75, Math.round(routeDistance / 65 * 60))
+      : Math.max(90, Math.round(routeDistance / 85 * 60));
+  const provider = preferredMode === "avia" ? ["Учебная авиация", "https://avia.tutu.ru/"] : preferredMode === "bus" ? ["Учебный автобус", "https://bus.tutu.ru/"] : ["ФПК", "https://www.tutu.ru/poezda/"];
+  return { transport: preferredMode, price: { amount, currency: "RUB" }, duration_min: durationMin, departure_at: `${date}T19:16:00+03:00`, arrival_at: `${date}T23:50:00+03:00`, carriers: [provider[0]], search_results_url: provider[1], checkout_url: provider[1], legs: [{ from: origin, to: destination }] };
 }
 
 async function geocode(city: string): Promise<[number, number]> {
@@ -77,16 +88,21 @@ async function geocode(city: string): Promise<[number, number]> {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { origin?: string; date?: string; reason?: string; budget?: number; customAlibi?: string };
+    const body = (await request.json()) as { origin?: string; date?: string; reason?: string; budget?: number; customAlibi?: string; transportModes?: unknown; maxDurationMin?: unknown };
     const origin = body.origin?.trim();
     const date = body.date;
     const reasonKey = body.reason || "meeting";
     const budget = Number(body.budget);
     const customAlibi = body.customAlibi?.trim() || "";
+    const requestedModes = body.transportModes === undefined ? transportModes : body.transportModes;
+    const maxDurationMin = body.maxDurationMin === undefined || body.maxDurationMin === null ? null : Number(body.maxDurationMin);
     if (!origin || origin.length > 80) return Response.json({ error: "Укажите нормальный город отправления" }, { status: 400 });
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return Response.json({ error: "Дата выглядит подозрительно" }, { status: 400 });
     if (!Number.isFinite(budget) || budget < 1000 || budget > 1_000_000) return Response.json({ error: "Бюджет должен быть от 1 000 до 1 000 000 ₽" }, { status: 400 });
     if (customAlibi.length > 600) return Response.json({ error: "Черновик алиби должен быть короче 600 символов" }, { status: 400 });
+    if (!Array.isArray(requestedModes) || requestedModes.length === 0 || requestedModes.some((mode) => !transportModes.includes(mode as TransportMode))) return Response.json({ error: "Выберите хотя бы один доступный вид транспорта" }, { status: 400 });
+    if (maxDurationMin !== null && (!Number.isInteger(maxDurationMin) || maxDurationMin < 60 || maxDurationMin > 72 * 60)) return Response.json({ error: "Максимальное время в пути должно быть от 1 до 72 часов" }, { status: 400 });
+    const selectedModes = [...new Set(requestedModes)] as TransportMode[];
 
     const [originLat, originLon] = await geocode(origin);
     const originPoint: [number, number] = [originLat, originLon];
@@ -103,27 +119,33 @@ export async function POST(request: Request) {
       cachedSearches = { fetchedAt: new Date().toISOString(), rows };
       routeSearchCache.set(cacheKey, cachedSearches);
     }
-    const ranked = cachedSearches.rows.flatMap(({ place, payload }) => (payload?.variants || []).map((offer) => ({
+    const ranked = cachedSearches.rows.flatMap(({ place, payload }) => (payload?.variants || []).filter((offer) => offerMatchesFilters(offer, selectedModes, maxDurationMin)).map((offer) => ({
       ...rankedCandidate(place, offer, originPoint), payload,
     })));
     const found = selectPlan(ranked, budget);
+    const demoCandidates = destinations
+      .filter((candidatePlace) => candidatePlace.name.toLocaleLowerCase("ru") !== origin.toLocaleLowerCase("ru"))
+      .map((candidatePlace) => {
+        const candidateDistance = distanceKm(originPoint, [candidatePlace.lat, candidatePlace.lon]);
+        return rankedCandidate(candidatePlace, demoOffer(origin, candidatePlace.name, date, budget, candidateDistance, selectedModes), originPoint);
+      })
+      .filter(({ offer: candidateOffer }) => offerMatchesFilters(candidateOffer, selectedModes, maxDurationMin));
+    const fallback = selectPlan(demoCandidates, budget);
+    const chosen = found || fallback;
+    if (!chosen) return Response.json({ error: "По заданным фильтрам не нашлось маршрутов. Увеличьте время в пути или выберите другой транспорт." }, { status: 422 });
 
-    let place: EscapeDestination = found?.place || (budget >= 50_000 ? candidates.at(-1)! : candidates[0]);
-    let offer = found?.offer;
-    let routeDistance = found?.distanceKm || distanceKm(originPoint, [place.lat, place.lon]);
-    let source: "live" | "demo" = "live";
-    if (!offer) { source = "demo"; offer = demoOffer(origin, place.name, date, budget, routeDistance); }
-    else {
+    let place: EscapeDestination = chosen.place;
+    const offer = chosen.offer;
+    let routeDistance = chosen.distanceKm;
+    const source: "live" | "demo" = found ? "live" : "demo";
+    if (found) {
       const payload = ranked.find((candidate) => candidate.offer === offer)?.payload;
       place = destinations.find((item) => item.name === payload?.meta?.to?.name) || place;
       routeDistance = distanceKm(originPoint, [place.lat, place.lon]);
     }
     const selection = selectionSummary({ place, offer, distanceKm: routeDistance }, budget);
     const liveProfileCandidates = selectPlanProfiles(ranked, budget);
-    const demoProfileCandidates = selectPlanProfiles(candidates.map((candidatePlace) => {
-      const candidateDistance = distanceKm(originPoint, [candidatePlace.lat, candidatePlace.lon]);
-      return rankedCandidate(candidatePlace, demoOffer(origin, candidatePlace.name, date, budget, candidateDistance), originPoint);
-    }), budget);
+    const demoProfileCandidates = selectPlanProfiles(demoCandidates, budget);
     const profileCandidates = liveProfileCandidates.length === 4 ? liveProfileCandidates : demoProfileCandidates;
     const liveQuote = { source: "tutu" as const, fetchedAt: cachedSearches.fetchedAt };
     const demoQuote = { source: "demo" as const, fetchedAt: cachedSearches.fetchedAt };

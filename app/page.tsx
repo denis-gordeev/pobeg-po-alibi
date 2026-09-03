@@ -29,20 +29,26 @@ const reasons = [
 ];
 const transportNames: Record<string, string> = { railway: "ПОЕЗД", rail: "ПОЕЗД", avia: "САМОЛЁТ", bus: "АВТОБУС", etrain: "ЭЛЕКТРИЧКА" };
 const budgetPresets = [7_000, 20_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
+const transportFilters = [
+  { value: "avia", label: "САМОЛЁТ" },
+  { value: "railway", label: "ПОЕЗД" },
+  { value: "bus", label: "АВТОБУС" },
+] as const;
 const resultCacheKey = "pobeg-po-alibi:recent-results";
 const resultCacheTtl = 6 * 60 * 60 * 1000;
-const resultCacheVersion = 2;
-type EscapeRequest = { origin: string; date: string; reason: string; budget: number; customAlibi: string };
+const resultCacheVersion = 3;
+type TransportMode = typeof transportFilters[number]["value"];
+type EscapeRequest = { origin: string; date: string; reason: string; budget: number; customAlibi: string; transportModes: TransportMode[]; maxDurationMin: number | null };
 type CachedResult = { key: string; savedAt: number; request?: EscapeRequest; result: EscapeResult };
 
 function requestCacheKey(request: EscapeRequest) {
-  return JSON.stringify({ ...request, origin: request.origin.toLocaleLowerCase("ru") });
+  return JSON.stringify({ ...request, origin: request.origin.toLocaleLowerCase("ru"), transportModes: [...request.transportModes].sort() });
 }
 
 function readCachedResults() {
   try {
     const stored = JSON.parse(localStorage.getItem(resultCacheKey) || "[]") as CachedResult[] | { version?: number; rows?: CachedResult[] };
-    return Array.isArray(stored) ? stored : stored.version === resultCacheVersion && Array.isArray(stored.rows) ? stored.rows : [];
+    return Array.isArray(stored) ? stored : (stored.version === 2 || stored.version === resultCacheVersion) && Array.isArray(stored.rows) ? stored.rows : [];
   }
   catch { return []; }
 }
@@ -59,11 +65,11 @@ function activeCachedResults() {
 }
 
 function requestFromCache(row: CachedResult): EscapeRequest | null {
-  if (row.request) return row.request;
+  if (row.request) return { ...row.request, transportModes: row.request.transportModes || transportFilters.map(({ value }) => value), maxDurationMin: row.request.maxDurationMin ?? null };
   try {
     const value = JSON.parse(row.key) as Partial<EscapeRequest>;
     if (!value.origin || !value.date || !value.reason || !Number.isFinite(value.budget)) return null;
-    return { origin: value.origin, date: value.date, reason: value.reason, budget: Number(value.budget), customAlibi: value.customAlibi || "" };
+    return { origin: value.origin, date: value.date, reason: value.reason, budget: Number(value.budget), customAlibi: value.customAlibi || "", transportModes: value.transportModes || transportFilters.map(({ value: mode }) => mode), maxDurationMin: value.maxDurationMin ?? null };
   } catch { return null; }
 }
 
@@ -81,6 +87,8 @@ export default function Home() {
   const [reason, setReason] = useState("meeting");
   const [budget, setBudget] = useState("7000");
   const [customAlibi, setCustomAlibi] = useState("");
+  const [selectedTransports, setSelectedTransports] = useState<TransportMode[]>(transportFilters.map(({ value }) => value));
+  const [maxDuration, setMaxDuration] = useState("0");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<EscapeResult | null>(null);
@@ -100,7 +108,8 @@ export default function Home() {
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError(""); setCopied(null); setResult(null);
-    const escapeRequest = { origin: origin.trim(), date, reason, budget: Number(budget), customAlibi: customAlibi.trim() };
+    if (selectedTransports.length === 0) { setError("Выберите хотя бы один вид транспорта"); setLoading(false); return; }
+    const escapeRequest = { origin: origin.trim(), date, reason, budget: Number(budget), customAlibi: customAlibi.trim(), transportModes: selectedTransports, maxDurationMin: Number(maxDuration) || null };
     const requestKey = requestCacheKey(escapeRequest);
     try {
       const cachedRows = activeCachedResults();
@@ -111,7 +120,7 @@ export default function Home() {
         setHistory(cachedRows);
         return;
       }
-      const response = await fetch("/api/escape", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ origin, date, reason, budget: Number(budget), customAlibi }) });
+      const response = await fetch("/api/escape", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(escapeRequest) });
       const data = (await response.json()) as EscapeResult & { error?: string };
       if (!response.ok) throw new Error(data.error || "Маршрут сорвался с радара");
       setResult(data);
@@ -133,9 +142,13 @@ export default function Home() {
   function restoreOperation(row: CachedResult) {
     const request = requestFromCache(row);
     if (!request) return;
-    setOrigin(request.origin); setDate(request.date); setReason(request.reason); setBudget(String(request.budget)); setCustomAlibi(request.customAlibi);
+    setOrigin(request.origin); setDate(request.date); setReason(request.reason); setBudget(String(request.budget)); setCustomAlibi(request.customAlibi); setSelectedTransports(request.transportModes); setMaxDuration(String(request.maxDurationMin || 0));
     setError(""); setCopied(null); setActiveRequest(request); setResult({ ...row.result, cache: { ...row.result.cache, status: "hit" } });
     window.requestAnimationFrame(() => document.querySelector(".result")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
+  function toggleTransport(mode: TransportMode) {
+    setSelectedTransports((current) => current.includes(mode) ? current.filter((item) => item !== mode) : [...current, mode]);
   }
 
   function clearHistory() {
@@ -202,6 +215,9 @@ export default function Home() {
           <label className="field wide"><span>ГДЕ ВАС ЗАСТАЛА РЕАЛЬНОСТЬ</span><input value={origin} onChange={(e) => setOrigin(e.target.value)} required maxLength={80} /></label>
           <label className="field"><span>ДАТА ЭВАКУАЦИИ</span><input type="date" value={date} min={isoDate(1)} onChange={(e) => setDate(e.target.value)} required /></label>
           <label className="field budget-field"><span>ПОТОЛОК СОВЕСТИ, ₽</span><input type="number" min="1000" max="1000000" step="500" value={budget} onChange={(e) => setBudget(e.target.value)} required /><span className="budget-presets" aria-label="Быстрый выбор бюджета">{budgetPresets.map((value) => <button type="button" key={value} className={Number(budget) === value ? "active" : ""} onClick={() => setBudget(String(value))}>{compactRubles(value)}</button>)}</span></label>
+          <fieldset className="travel-filters"><legend>КАК И СКОЛЬКО БЕЖИМ</legend><div className="transport-filters" aria-label="Виды транспорта">
+            {transportFilters.map((item) => <label key={item.value} className={selectedTransports.includes(item.value) ? "transport-filter active" : "transport-filter"}><input type="checkbox" checked={selectedTransports.includes(item.value)} onChange={() => toggleTransport(item.value)} /><span>{item.label}</span></label>)}
+          </div><label className="duration-filter"><span>МАКСИМУМ В ПУТИ</span><select value={maxDuration} onChange={(event) => setMaxDuration(event.target.value)}><option value="0">БЕЗ ОГРАНИЧЕНИЙ</option><option value="240">ДО 4 ЧАСОВ</option><option value="480">ДО 8 ЧАСОВ</option><option value="720">ДО 12 ЧАСОВ</option><option value="1440">ДО 24 ЧАСОВ</option><option value="2880">ДО 48 ЧАСОВ</option></select></label></fieldset>
           <fieldset className="reason-field"><legend>ОТ ЧЕГО БЕЖИМ</legend><div className="reason-grid">
             {reasons.map((item) => <label key={item.value} className={reason === item.value ? "reason active" : "reason"}><input type="radio" name="reason" value={item.value} checked={reason === item.value} onChange={() => setReason(item.value)} /><small>{item.mark}</small><span>{item.label}</span></label>)}
           </div></fieldset>

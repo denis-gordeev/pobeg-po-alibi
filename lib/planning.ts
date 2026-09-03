@@ -21,12 +21,27 @@ export type PlanCandidate = {
 };
 
 export type PlanProfile = "economy" | "balanced" | "far" | "budget";
+export type TransportMode = "avia" | "railway" | "bus";
 
 export type ProfiledPlan = {
   id: PlanProfile;
   label: string;
   candidate: PlanCandidate;
 };
+
+export const transportModes: TransportMode[] = ["avia", "railway", "bus"];
+
+export function transportMode(transport: string): TransportMode | null {
+  if (/avia|plane|air/i.test(transport)) return "avia";
+  if (/rail|train|etrain|suburban/i.test(transport)) return "railway";
+  if (/bus/i.test(transport)) return "bus";
+  return null;
+}
+
+export function offerMatchesFilters(offer: TransportOffer, modes: TransportMode[], maxDurationMin: number | null) {
+  const mode = transportMode(offer.transport);
+  return Boolean(mode && modes.includes(mode) && (maxDurationMin === null || offer.duration_min <= maxDurationMin));
+}
 
 export function normalizeBudgetCeiling(budget: number) {
   return budgetCeilings.find((ceiling) => budget <= ceiling) ?? budgetCeilings.at(-1)!;
